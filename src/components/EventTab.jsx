@@ -119,9 +119,7 @@ export default function EventTab({
                 ? filteredEvents.map((ev, i) => (
                     <tr
                       key={i}
-                      style={
-                        hoveredIndex === i ? { background: "#ffe5e5" } : {}
-                      }
+                      className={hoveredIndex === i ? "event-row-highlighted" : ""}
                       onMouseEnter={() => setHoveredIndex(i)}
                       onMouseLeave={() => setHoveredIndex(null)}
                     >
@@ -137,9 +135,7 @@ export default function EventTab({
                 ? filteredEvents.map((ev, i) => (
                     <tr
                       key={i}
-                      style={
-                        hoveredIndex === i ? { background: "#ffe5e5" } : {}
-                      }
+                      className={hoveredIndex === i ? "event-row-highlighted" : ""}
                       onMouseEnter={() => setHoveredIndex(i)}
                       onMouseLeave={() => setHoveredIndex(null)}
                     >
@@ -154,9 +150,7 @@ export default function EventTab({
                 ? filteredEvents.map((ev, i) => (
                     <tr
                       key={i}
-                      style={
-                        hoveredIndex === i ? { background: "#ffe5e5" } : {}
-                      }
+                      className={hoveredIndex === i ? "event-row-highlighted" : ""}
                       onMouseEnter={() => setHoveredIndex(i)}
                       onMouseLeave={() => setHoveredIndex(null)}
                     >

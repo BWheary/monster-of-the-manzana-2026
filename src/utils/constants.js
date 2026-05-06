@@ -38,29 +38,29 @@ export const metsOrangeRoster = [
 
 // Weekly ranges
 export const weekRangesEn = [
-  { label: "Week One (6/16 - 6/21)", start: "06/16", end: "06/21" },
-  { label: "Week Two (6/23 - 6/28)", start: "06/23", end: "06/28" },
-  { label: "Week Three (6/30 - 7/05)", start: "06/30", end: "07/05" },
-  { label: "Week Four (7/07 - 7/12)", start: "07/07", end: "07/12" },
-  { label: "Week Five (7/14 - 7/19)", start: "07/14", end: "07/19" },
-  { label: "Week Six (7/21 - 7/26)", start: "07/21", end: "07/26" },
-  { label: "Week Seven (7/28 - 8/02)", start: "07/28", end: "08/02" },
-  { label: "Week Eight (8/04 - 8/09)", start: "08/04", end: "08/09" },
-  { label: "Week Nine (8/11 - 8/16)", start: "08/11", end: "08/16" },
-  { label: "Week Ten (8/18 - 8/19)", start: "08/18", end: "08/19" },
+  { label: "Week One", start: "06/16", end: "06/21" },
+  { label: "Week Two", start: "06/23", end: "06/28" },
+  { label: "Week Three", start: "06/30", end: "07/05" },
+  { label: "Week Four", start: "07/07", end: "07/12" },
+  { label: "Week Five", start: "07/14", end: "07/19" },
+  { label: "Week Six", start: "07/21", end: "07/26" },
+  { label: "Week Seven", start: "07/28", end: "08/02" },
+  { label: "Week Eight", start: "08/04", end: "08/09" },
+  { label: "Week Nine", start: "08/11", end: "08/16" },
+  { label: "Week Ten", start: "08/18", end: "08/19" },
 ];
 
 export const weekRangesEs = [
-  { label: "Semana Uno (6/16 - 6/21)", start: "06/16", end: "06/21" },
-  { label: "Semana Dos (6/23 - 6/28)", start: "06/23", end: "06/28" },
-  { label: "Semana Tres (6/30 - 7/05)", start: "06/30", end: "07/05" },
-  { label: "Semana Cuatro (7/07 - 7/12)", start: "07/07", end: "07/12" },
-  { label: "Semana Cinco (7/14 - 7/19)", start: "07/14", end: "07/19" },
-  { label: "Semana Seis (7/21 - 7/26)", start: "07/21", end: "07/26" },
-  { label: "Semana Siete (7/28 - 8/02)", start: "07/28", end: "08/02" },
-  { label: "Semana Ocho (8/04 - 8/09)", start: "08/04", end: "08/09" },
-  { label: "Semana Nueve (8/11 - 8/16)", start: "08/11", end: "08/16" },
-  { label: "Semana Diez (8/18 - 8/19)", start: "08/18", end: "08/19" },
+  { label: "Semana Uno", start: "06/16", end: "06/21" },
+  { label: "Semana Dos", start: "06/23", end: "06/28" },
+  { label: "Semana Tres", start: "06/30", end: "07/05" },
+  { label: "Semana Cuatro", start: "07/07", end: "07/12" },
+  { label: "Semana Cinco", start: "07/14", end: "07/19" },
+  { label: "Semana Seis", start: "07/21", end: "07/26" },
+  { label: "Semana Siete", start: "07/28", end: "08/02" },
+  { label: "Semana Ocho", start: "08/04", end: "08/09" },
+  { label: "Semana Nueve", start: "08/11", end: "08/16" },
+  { label: "Semana Diez", start: "08/18", end: "08/19" },
 ];
 
 // Scoring point values

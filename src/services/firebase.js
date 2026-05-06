@@ -10,5 +10,26 @@ const firebaseConfig = {
   appId: process.env.REACT_APP_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+const requiredFirebaseKeys = [
+  "apiKey",
+  "authDomain",
+  "projectId",
+  "appId",
+];
+
+export const isFirebaseConfigured = requiredFirebaseKeys.every(
+  (key) => Boolean(firebaseConfig[key])
+);
+
+let db = null;
+
+if (isFirebaseConfigured) {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} else {
+  console.warn(
+    "Firebase environment variables are missing. Falling back to localStorage."
+  );
+}
+
+export { db };

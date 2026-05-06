@@ -11,6 +11,8 @@ import {
   deleteCSVFile,
   loadRosters,
   saveRosters,
+  subscribeToCSVFiles,
+  subscribeToRosters,
 } from "./services/dataStorage";
 import { parseCSVFile } from "./services/csvParser";
 import { calculateAllPlayerScores } from "./services/scoring";
@@ -37,10 +39,36 @@ function App() {
 
   // Load data on mount
   useEffect(() => {
-    const loadedFiles = loadCSVFiles();
-    const loadedRosters = loadRosters();
-    setCsvFiles(loadedFiles);
-    setRosters(loadedRosters);
+    let isMounted = true;
+
+    const initializeData = async () => {
+      try {
+        const [loadedFiles, loadedRosters] = await Promise.all([
+          loadCSVFiles(),
+          loadRosters(),
+        ]);
+        if (!isMounted) return;
+        setCsvFiles(loadedFiles);
+        setRosters(loadedRosters);
+      } catch (error) {
+        console.error("Error initializing app data:", error);
+      }
+    };
+
+    initializeData();
+
+    const unsubscribeFiles = subscribeToCSVFiles((files) => {
+      if (isMounted) setCsvFiles(files);
+    });
+    const unsubscribeRosters = subscribeToRosters((liveRosters) => {
+      if (isMounted) setRosters(liveRosters);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeFiles();
+      unsubscribeRosters();
+    };
   }, []);
 
   // Build players array from rosters
@@ -128,27 +156,35 @@ function App() {
   const handleFileUpload = async (file, week, team) => {
     try {
       const result = await parseCSVFile(file, players);
-      const savedFile = saveCSVFile({
+      await saveCSVFile({
         name: file.name,
         week,
         team: team || null, // Optional team selection
         events: result.events,
       });
-      setCsvFiles((prev) => [...prev, savedFile]);
     } catch (error) {
       console.error("Upload error:", error);
       alert("Error uploading CSV: " + error.message);
     }
   };
 
-  const handleRemoveCsv = (fileId) => {
-    const updated = deleteCSVFile(fileId);
-    setCsvFiles(updated);
+  const handleRemoveCsv = async (fileId) => {
+    try {
+      await deleteCSVFile(fileId);
+    } catch (error) {
+      console.error("Delete error:", error);
+      alert("Error deleting CSV: " + error.message);
+    }
   };
 
-  const handleRosterChange = (newRosters) => {
+  const handleRosterChange = async (newRosters) => {
     setRosters(newRosters);
-    saveRosters(newRosters);
+    try {
+      await saveRosters(newRosters);
+    } catch (error) {
+      console.error("Roster save error:", error);
+      alert("Error saving roster changes: " + error.message);
+    }
   };
 
   return (
