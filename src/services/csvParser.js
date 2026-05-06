@@ -1,6 +1,10 @@
 import Papa from "papaparse";
 import { isInApple, roundToOneDecimal } from "../utils/zoneUtils";
 
+function normalizePlayerName(name) {
+  return String(name || "").trim();
+}
+
 // Parse CSV file and extract events
 // This logic is EXACTLY the same as the original handleFileUpload function
 export function parseCSVFile(file, players) {
@@ -15,10 +19,13 @@ export function parseCSVFile(file, players) {
           swing = [],
           miss = [],
           take = [];
+        const playersByName = new Map(
+          players.map((player) => [normalizePlayerName(player.name), player])
+        );
 
         for (const row of rows) {
-          const playerName = row["Batter"] || "";
-          const playerInfo = players.find((p) => p.name === playerName);
+          const playerName = normalizePlayerName(row["Batter"]);
+          const playerInfo = playersByName.get(playerName);
 
           if (!playerInfo) continue;
 
