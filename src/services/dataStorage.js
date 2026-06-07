@@ -14,6 +14,7 @@ import { db, isFirebaseConfigured } from "./firebase";
 const STORAGE_KEYS = {
   CSV_FILES: "monster_csv_files",
   ROSTERS: "monster_rosters",
+  ROSTERS_UPDATED: "monster_rosters_updated_at",
 };
 
 const COLLECTIONS = {
@@ -23,19 +24,95 @@ const COLLECTIONS = {
 
 const ROSTERS_DOC_ID = "rosters";
 
-// Generate unique ID for CSV files
+const EMPTY_ROSTERS = {
+  "Mets Blue": [],
+  "Mets Orange": [],
+};
+
+let firestoreWriteBlocked = false;
+
 function generateId() {
   return `csv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-function getDefaultRosters() {
+function isPermissionError(error) {
+  return (
+    error?.code === "permission-denied" ||
+    (typeof error?.message === "string" &&
+      error.message.includes("Missing or insufficient permissions"))
+  );
+}
+
+function markFirestoreWriteBlocked(error) {
+  if (isPermissionError(error)) {
+    if (!firestoreWriteBlocked) {
+      console.warn(
+        "Firestore writes blocked (permissions). Using localStorage as source of truth."
+      );
+      firestoreWriteBlocked = true;
+    }
+    return true;
+  }
+  return false;
+}
+
+function shouldUseFirestoreSync() {
+  return isFirebaseConfigured && db && !firestoreWriteBlocked;
+}
+
+function normalizeRosters(teams) {
+  if (!teams || typeof teams !== "object") {
+    return { "Mets Blue": [], "Mets Orange": [] };
+  }
   return {
-    "Mets Blue": [...metsBlueRoster],
-    "Mets Orange": [...metsOrangeRoster],
+    "Mets Blue": Array.isArray(teams["Mets Blue"]) ? teams["Mets Blue"] : [],
+    "Mets Orange": Array.isArray(teams["Mets Orange"])
+      ? teams["Mets Orange"]
+      : [],
   };
 }
 
-// Load CSV files from localStorage
+function isDefaultRoster(teams) {
+  const normalized = normalizeRosters(teams);
+  const blue = normalized["Mets Blue"];
+  const orange = normalized["Mets Orange"];
+  const defaultBlue = [...metsBlueRoster];
+  const defaultOrange = [...metsOrangeRoster];
+
+  if (
+    JSON.stringify(blue) === JSON.stringify(defaultBlue) &&
+    JSON.stringify(orange) === JSON.stringify(defaultOrange)
+  ) {
+    return true;
+  }
+
+  // Treat partial legacy auto-seeds as defaults (subset of hardcoded names).
+  const defaultNames = new Set([...defaultBlue, ...defaultOrange]);
+  const storedNames = [...blue, ...orange];
+  if (
+    storedNames.length > 0 &&
+    storedNames.every((name) => defaultNames.has(name))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isExplicitUserRoster(data) {
+  return data?.userConfigured === true;
+}
+
+function hasRosterContent(rosters) {
+  return (
+    rosters["Mets Blue"].length > 0 || rosters["Mets Orange"].length > 0
+  );
+}
+
+function getRostersUpdatedAtLocal() {
+  return localStorage.getItem(STORAGE_KEYS.ROSTERS_UPDATED) || null;
+}
+
 function loadCSVFilesFromLocal() {
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.CSV_FILES);
@@ -48,80 +125,267 @@ function loadCSVFilesFromLocal() {
   return [];
 }
 
-// Save CSV file to localStorage
-function saveCSVFileToLocal(fileData) {
+function replaceCSVFilesInLocal(files) {
   try {
-    const files = loadCSVFilesFromLocal();
-    const newFile = {
-      id: generateId(),
-      name: fileData.name,
-      uploaded: new Date().toISOString(),
-      week: fileData.week || "Unassigned",
-      team: fileData.team || null, // Optional team selection
-      events: fileData.events,
-    };
-    files.push(newFile);
     localStorage.setItem(STORAGE_KEYS.CSV_FILES, JSON.stringify(files));
-    return newFile;
   } catch (error) {
-    console.error("Error saving CSV file:", error);
+    console.error("Error saving CSV files to localStorage:", error);
     throw error;
   }
 }
 
-// Delete CSV file from localStorage
+function appendCSVFileToLocal(fileRecord) {
+  const files = loadCSVFilesFromLocal();
+  const existingIndex = files.findIndex((f) => f.id === fileRecord.id);
+  if (existingIndex >= 0) {
+    files[existingIndex] = fileRecord;
+  } else {
+    files.push(fileRecord);
+  }
+  replaceCSVFilesInLocal(files);
+  return fileRecord;
+}
+
+function saveCSVFileToLocal(fileData, existingId) {
+  const newFile = {
+    id: existingId || generateId(),
+    name: fileData.name,
+    uploaded: fileData.uploaded || new Date().toISOString(),
+    week: fileData.week || "Unassigned",
+    team: fileData.team || null,
+    events: fileData.events,
+  };
+  return appendCSVFileToLocal(newFile);
+}
+
 function deleteCSVFileFromLocal(fileId) {
-  try {
-    const files = loadCSVFilesFromLocal();
-    const filtered = files.filter((f) => f.id !== fileId);
-    localStorage.setItem(STORAGE_KEYS.CSV_FILES, JSON.stringify(filtered));
-    return filtered;
-  } catch (error) {
-    console.error("Error deleting CSV file:", error);
-    throw error;
-  }
+  const files = loadCSVFilesFromLocal();
+  const filtered = files.filter((f) => f.id !== fileId);
+  replaceCSVFilesInLocal(filtered);
+  return filtered;
 }
 
-// Update CSV file week assignment
 function updateCSVWeekInLocal(fileId, week) {
-  try {
-    const files = loadCSVFilesFromLocal();
-    const updated = files.map((f) =>
-      f.id === fileId ? { ...f, week } : f
-    );
-    localStorage.setItem(STORAGE_KEYS.CSV_FILES, JSON.stringify(updated));
-    return updated;
-  } catch (error) {
-    console.error("Error updating CSV week:", error);
-    throw error;
-  }
+  const files = loadCSVFilesFromLocal();
+  const updated = files.map((f) => (f.id === fileId ? { ...f, week } : f));
+  replaceCSVFilesInLocal(updated);
+  return updated;
 }
 
-// Load rosters from localStorage
 function loadRostersFromLocal() {
   try {
+    const updatedAt = getRostersUpdatedAtLocal();
     const stored = localStorage.getItem(STORAGE_KEYS.ROSTERS);
-    if (stored) {
-      return JSON.parse(stored);
+    if (!stored || !updatedAt) {
+      if (stored) {
+        localStorage.removeItem(STORAGE_KEYS.ROSTERS);
+      }
+      if (updatedAt) {
+        localStorage.removeItem(STORAGE_KEYS.ROSTERS_UPDATED);
+      }
+      return { ...EMPTY_ROSTERS };
     }
-    // First time - initialize with default rosters
-    const defaultRosters = getDefaultRosters();
-    saveRostersToLocal(defaultRosters);
-    return defaultRosters;
+
+    const rosters = normalizeRosters(JSON.parse(stored));
+    if (isDefaultRoster(rosters)) {
+      localStorage.removeItem(STORAGE_KEYS.ROSTERS);
+      localStorage.removeItem(STORAGE_KEYS.ROSTERS_UPDATED);
+      return { ...EMPTY_ROSTERS };
+    }
+    return rosters;
   } catch (error) {
     console.error("Error loading rosters:", error);
-    // Fallback to defaults
-    return getDefaultRosters();
   }
+  return { ...EMPTY_ROSTERS };
 }
 
-// Save rosters to localStorage
-function saveRostersToLocal(rosters) {
+function saveRostersToLocal(rosters, updatedAt) {
   try {
-    localStorage.setItem(STORAGE_KEYS.ROSTERS, JSON.stringify(rosters));
+    const normalized = normalizeRosters(rosters);
+    localStorage.setItem(STORAGE_KEYS.ROSTERS, JSON.stringify(normalized));
+    localStorage.setItem(
+      STORAGE_KEYS.ROSTERS_UPDATED,
+      updatedAt || new Date().toISOString()
+    );
   } catch (error) {
     console.error("Error saving rosters:", error);
     throw error;
+  }
+}
+
+async function pushRostersToFirestore(rosters, updatedAt) {
+  await setDoc(
+    doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID),
+    {
+      teams: normalizeRosters(rosters),
+      updatedAt: updatedAt || new Date().toISOString(),
+      userConfigured: true,
+    },
+    { merge: true }
+  );
+}
+
+function resolveRosterConflict(localRosters, localUpdatedAt, firestoreData) {
+  const firestoreRosters = normalizeRosters(firestoreData.teams);
+  const firestoreUpdatedAt = firestoreData.updatedAt || null;
+  const firestoreIsUserConfigured = isExplicitUserRoster(firestoreData);
+
+  if (localUpdatedAt) {
+    if (
+      !firestoreIsUserConfigured ||
+      !firestoreUpdatedAt ||
+      localUpdatedAt >= firestoreUpdatedAt
+    ) {
+      return {
+        rosters: localRosters,
+        updatedAt: localUpdatedAt,
+        source: "local",
+      };
+    }
+    if (isDefaultRoster(firestoreRosters)) {
+      return {
+        rosters: localRosters,
+        updatedAt: localUpdatedAt,
+        source: "local",
+      };
+    }
+    return {
+      rosters: firestoreRosters,
+      updatedAt: firestoreUpdatedAt,
+      source: "firestore",
+    };
+  }
+
+  if (
+    firestoreIsUserConfigured &&
+    hasRosterContent(firestoreRosters) &&
+    !isDefaultRoster(firestoreRosters)
+  ) {
+    return {
+      rosters: firestoreRosters,
+      updatedAt: firestoreUpdatedAt,
+      source: "firestore",
+    };
+  }
+
+  if (hasRosterContent(localRosters) && !isDefaultRoster(localRosters)) {
+    return {
+      rosters: localRosters,
+      updatedAt: localUpdatedAt,
+      source: "local",
+    };
+  }
+
+  return { rosters: { ...EMPTY_ROSTERS }, updatedAt: null, source: "empty" };
+}
+
+async function tryPushRostersToFirestore(rosters, updatedAt) {
+  if (!shouldUseFirestoreSync()) return false;
+  try {
+    await pushRostersToFirestore(rosters, updatedAt);
+    return true;
+  } catch (error) {
+    markFirestoreWriteBlocked(error);
+    console.error("Error saving rosters to Firestore:", error);
+    return false;
+  }
+}
+
+async function syncRostersWithFirestore() {
+  const localRosters = loadRostersFromLocal();
+  const localUpdatedAt = getRostersUpdatedAtLocal();
+
+  if (!shouldUseFirestoreSync()) {
+    return localRosters;
+  }
+
+  try {
+    const rostersDoc = await getDoc(
+      doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID)
+    );
+
+    if (!rostersDoc.exists() || !rostersDoc.data().teams) {
+      if (hasRosterContent(localRosters)) {
+        const updatedAt = localUpdatedAt || new Date().toISOString();
+        await tryPushRostersToFirestore(localRosters, updatedAt);
+        saveRostersToLocal(localRosters, updatedAt);
+        return localRosters;
+      }
+      return { ...EMPTY_ROSTERS };
+    }
+
+    const firestoreData = rostersDoc.data();
+    if (
+      !hasRosterContent(localRosters) &&
+      !localUpdatedAt &&
+      !isExplicitUserRoster(firestoreData)
+    ) {
+      return { ...EMPTY_ROSTERS };
+    }
+
+    if (
+      !hasRosterContent(localRosters) &&
+      !localUpdatedAt &&
+      isDefaultRoster(firestoreData.teams)
+    ) {
+      return { ...EMPTY_ROSTERS };
+    }
+
+    const resolved = resolveRosterConflict(
+      localRosters,
+      localUpdatedAt,
+      firestoreData
+    );
+
+    if (resolved.source === "local") {
+      const updatedAt = resolved.updatedAt || new Date().toISOString();
+      await tryPushRostersToFirestore(resolved.rosters, updatedAt);
+      saveRostersToLocal(resolved.rosters, updatedAt);
+      return resolved.rosters;
+    }
+
+    if (resolved.source === "firestore") {
+      if (
+        isExplicitUserRoster(firestoreData) &&
+        !isDefaultRoster(resolved.rosters)
+      ) {
+        saveRostersToLocal(resolved.rosters, resolved.updatedAt);
+      }
+      return loadRostersFromLocal();
+    }
+
+    return resolved.rosters;
+  } catch (error) {
+    markFirestoreWriteBlocked(error);
+    console.error("Error loading rosters from Firestore:", error);
+    return localRosters;
+  }
+}
+
+async function syncCSVFilesWithFirestore() {
+  const localFiles = loadCSVFilesFromLocal();
+
+  if (!shouldUseFirestoreSync()) {
+    return localFiles;
+  }
+
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.CSV_FILES));
+    const firestoreFiles = snapshot.docs.map((snapshotDoc) => ({
+      id: snapshotDoc.id,
+      ...snapshotDoc.data(),
+    }));
+
+    if (firestoreFiles.length > 0) {
+      replaceCSVFilesInLocal(firestoreFiles);
+      return firestoreFiles;
+    }
+
+    return localFiles;
+  } catch (error) {
+    markFirestoreWriteBlocked(error);
+    console.error("Error loading CSV files from Firestore:", error);
+    return localFiles;
   }
 }
 
@@ -130,11 +394,7 @@ export async function loadCSVFiles() {
     return loadCSVFilesFromLocal();
   }
   try {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.CSV_FILES));
-    return snapshot.docs.map((snapshotDoc) => ({
-      id: snapshotDoc.id,
-      ...snapshotDoc.data(),
-    }));
+    return await syncCSVFilesWithFirestore();
   } catch (error) {
     console.error("Error loading CSV files from Firestore:", error);
     return loadCSVFilesFromLocal();
@@ -150,39 +410,55 @@ export async function saveCSVFile(fileData) {
     events: fileData.events,
   };
 
-  if (!isFirebaseConfigured || !db) {
-    return saveCSVFileToLocal(fileData);
+  const localFile = saveCSVFileToLocal(filePayload);
+
+  if (!isFirebaseConfigured || !db || !shouldUseFirestoreSync()) {
+    return localFile;
   }
 
   try {
-    const docRef = await addDoc(collection(db, COLLECTIONS.CSV_FILES), filePayload);
-    return {
+    const docRef = await addDoc(
+      collection(db, COLLECTIONS.CSV_FILES),
+      filePayload
+    );
+    const cloudFile = {
       id: docRef.id,
       ...filePayload,
     };
+    deleteCSVFileFromLocal(localFile.id);
+    appendCSVFileToLocal(cloudFile);
+    return cloudFile;
   } catch (error) {
+    markFirestoreWriteBlocked(error);
     console.error("Error saving CSV file to Firestore:", error);
-    throw error;
+    return localFile;
   }
 }
 
 export async function deleteCSVFile(fileId) {
-  if (!isFirebaseConfigured || !db) {
-    return deleteCSVFileFromLocal(fileId);
+  deleteCSVFileFromLocal(fileId);
+
+  if (!isFirebaseConfigured || !db || !shouldUseFirestoreSync()) {
+    return loadCSVFilesFromLocal();
   }
+
   try {
     await deleteDoc(doc(db, COLLECTIONS.CSV_FILES, fileId));
-    return loadCSVFiles();
   } catch (error) {
+    markFirestoreWriteBlocked(error);
     console.error("Error deleting CSV file from Firestore:", error);
-    throw error;
   }
+
+  return loadCSVFilesFromLocal();
 }
 
 export async function updateCSVWeek(fileId, week) {
-  if (!isFirebaseConfigured || !db) {
-    return updateCSVWeekInLocal(fileId, week);
+  updateCSVWeekInLocal(fileId, week);
+
+  if (!isFirebaseConfigured || !db || !shouldUseFirestoreSync()) {
+    return loadCSVFilesFromLocal();
   }
+
   try {
     const existingDoc = await getDoc(doc(db, COLLECTIONS.CSV_FILES, fileId));
     if (!existingDoc.exists()) {
@@ -197,12 +473,14 @@ export async function updateCSVWeek(fileId, week) {
       },
       { merge: true }
     );
-
-    return loadCSVFiles();
   } catch (error) {
-    console.error("Error updating CSV week in Firestore:", error);
-    throw error;
+    if (!markFirestoreWriteBlocked(error)) {
+      console.error("Error updating CSV week in Firestore:", error);
+      throw error;
+    }
   }
+
+  return loadCSVFilesFromLocal();
 }
 
 export async function loadRosters() {
@@ -210,17 +488,7 @@ export async function loadRosters() {
     return loadRostersFromLocal();
   }
   try {
-    const rostersDoc = await getDoc(doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID));
-    if (rostersDoc.exists()) {
-      return rostersDoc.data().teams || getDefaultRosters();
-    }
-
-    const defaultRosters = getDefaultRosters();
-    await setDoc(doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID), {
-      teams: defaultRosters,
-      updatedAt: new Date().toISOString(),
-    });
-    return defaultRosters;
+    return await syncRostersWithFirestore();
   } catch (error) {
     console.error("Error loading rosters from Firestore:", error);
     return loadRostersFromLocal();
@@ -228,23 +496,15 @@ export async function loadRosters() {
 }
 
 export async function saveRosters(rosters) {
+  const updatedAt = new Date().toISOString();
+  const normalized = normalizeRosters(rosters);
+  saveRostersToLocal(normalized, updatedAt);
+
   if (!isFirebaseConfigured || !db) {
-    saveRostersToLocal(rosters);
     return;
   }
-  try {
-    await setDoc(
-      doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID),
-      {
-        teams: rosters,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  } catch (error) {
-    console.error("Error saving rosters to Firestore:", error);
-    throw error;
-  }
+
+  await tryPushRostersToFirestore(normalized, updatedAt);
 }
 
 export function subscribeToCSVFiles(onData, onError) {
@@ -252,17 +512,32 @@ export function subscribeToCSVFiles(onData, onError) {
     onData(loadCSVFilesFromLocal());
     return () => {};
   }
+
   return onSnapshot(
     collection(db, COLLECTIONS.CSV_FILES),
     (snapshot) => {
+      if (firestoreWriteBlocked) {
+        onData(loadCSVFilesFromLocal());
+        return;
+      }
+
       const files = snapshot.docs.map((snapshotDoc) => ({
         id: snapshotDoc.id,
         ...snapshotDoc.data(),
       }));
-      onData(files);
+
+      if (files.length > 0) {
+        replaceCSVFilesInLocal(files);
+        onData(files);
+        return;
+      }
+
+      onData(loadCSVFilesFromLocal());
     },
     (error) => {
+      markFirestoreWriteBlocked(error);
       console.error("CSV file subscription error:", error);
+      onData(loadCSVFilesFromLocal());
       if (onError) onError(error);
     }
   );
@@ -273,37 +548,68 @@ export function subscribeToRosters(onData, onError) {
     onData(loadRostersFromLocal());
     return () => {};
   }
+
   return onSnapshot(
     doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID),
     async (snapshot) => {
-      if (snapshot.exists()) {
-        onData(snapshot.data().teams || getDefaultRosters());
+      if (firestoreWriteBlocked) {
+        onData(loadRostersFromLocal());
         return;
       }
 
-      const defaultRosters = getDefaultRosters();
-      try {
-        await setDoc(doc(db, COLLECTIONS.APP_DATA, ROSTERS_DOC_ID), {
-          teams: defaultRosters,
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (error) {
-        console.error("Error seeding roster defaults:", error);
+      if (snapshot.exists() && snapshot.data().teams) {
+        const firestoreData = snapshot.data();
+        const localRosters = loadRostersFromLocal();
+        const localUpdatedAt = getRostersUpdatedAtLocal();
+
+        if (
+          !hasRosterContent(localRosters) &&
+          !localUpdatedAt &&
+          (!isExplicitUserRoster(firestoreData) ||
+            isDefaultRoster(firestoreData.teams))
+        ) {
+          onData({ ...EMPTY_ROSTERS });
+          return;
+        }
+
+        const resolved = resolveRosterConflict(
+          localRosters,
+          localUpdatedAt,
+          firestoreData
+        );
+
+        if (resolved.source === "local") {
+          const updatedAt = resolved.updatedAt || new Date().toISOString();
+          await tryPushRostersToFirestore(resolved.rosters, updatedAt);
+          saveRostersToLocal(resolved.rosters, updatedAt);
+        } else if (
+          resolved.source === "firestore" &&
+          isExplicitUserRoster(firestoreData) &&
+          !isDefaultRoster(resolved.rosters)
+        ) {
+          saveRostersToLocal(resolved.rosters, resolved.updatedAt);
+        }
+
+        onData(loadRostersFromLocal());
+        return;
       }
-      onData(defaultRosters);
+
+      onData(loadRostersFromLocal());
     },
     (error) => {
+      markFirestoreWriteBlocked(error);
       console.error("Roster subscription error:", error);
+      onData(loadRostersFromLocal());
       if (onError) onError(error);
     }
   );
 }
 
-// Clear all data (for testing/reset)
 export function clearAllData() {
   try {
     localStorage.removeItem(STORAGE_KEYS.CSV_FILES);
     localStorage.removeItem(STORAGE_KEYS.ROSTERS);
+    localStorage.removeItem(STORAGE_KEYS.ROSTERS_UPDATED);
   } catch (error) {
     console.error("Error clearing data:", error);
   }

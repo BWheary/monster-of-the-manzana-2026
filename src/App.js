@@ -155,11 +155,30 @@ function App() {
 
   const handleFileUpload = async (file, week, team) => {
     try {
+      if (players.length === 0) {
+        alert(
+          "No players on the roster. Add players via Manage Players before uploading a CSV."
+        );
+        return;
+      }
+
       const result = await parseCSVFile(file, players);
+      const totalEvents = Object.values(result.events).reduce(
+        (sum, events) => sum + events.length,
+        0
+      );
+
+      if (totalEvents === 0) {
+        alert(
+          "No events matched the current roster. Check that CSV Batter names exactly match player names in Manage Players."
+        );
+        return;
+      }
+
       await saveCSVFile({
         name: file.name,
         week,
-        team: team || null, // Optional team selection
+        team: team || null,
         events: result.events,
       });
     } catch (error) {
